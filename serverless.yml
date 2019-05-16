@@ -29,7 +29,7 @@ provider:
 functions:
   csvConverter:
     handler: csv_converter.csvConverter
-    memorySize: 512
+    memorySize: 1024
     events:
       - http:
           path: csv

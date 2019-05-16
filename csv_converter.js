@@ -44,79 +44,120 @@ function uploadFromStream(bucket, acl, key, cb) {
 }
 
 
-const convertAndUploadCsv = async (fileLink) => {
+const promisifyReadStream = function(stream) {
+    let fileNameColumn = null
+    let remainingColumns = null
+    const fileMap = {}
+
     return new Promise((resolve, reject) => {
-        request(fileLink)
-            .pipe(fs.createWriteStream('input.csv'))
-            .on('finish', function(){
-                const readStream = fs.createReadStream('./input.csv');
-                let fileNameColumn = null
-                let remainingColumns = null
-                const fileMap = {}
-                let filesUploaded = 0
+        stream.on('data', function (row) {
+            console.log(row)
+            if(!fileNameColumn && !remainingColumns){
+                fileNameColumn = row.shift()
+                remainingColumns = row
+            }
+            else {
 
-                csv
-                    .fromStream(readStream)
-                    .on("data", function(row){
-                        console.log(row)
-                        if(!fileNameColumn && !remainingColumns){
-                            fileNameColumn = row.shift()
-                            remainingColumns = row
-                        }
-                        else {
+                const key = row.shift()
+                if(!fileMap[key]) {
+                    fileMap[key] = [remainingColumns]
+                }
+                if(key)
+                    fileMap[key].push(row)
+            }
+        })
+        stream.on("finish", () => resolve(fileMap))
+        stream.on("error", reject)
 
-                            const key = row.shift()
-                            if(!fileMap[key]) {
-                                fileMap[key] = [remainingColumns]
-                            }
-                            if(key)
-                                fileMap[key].push(row)
-                        }
-                    })
-                    .on("end", async function () {
-                        delete fileMap["undefined"]
-                        const files = Object.keys(fileMap)
-                        files.forEach((key) => {
-                            const newWriteStream = fs.createWriteStream(`${key}.csv`)
+    })
+}
 
-                            csv
-                                .write(fileMap[key], { headers: true })
-                                .pipe(newWriteStream)
-                                .on('finish',async () => {
-                                        const readStream = fs.createReadStream(`./${key}.csv`);
-                                        readStream.pipe(
-                                            uploadFromStream
-                                            (
-                                                'ticketlake-dev',
-                                                "public-read",
-                                                key + '.csv',
-                                                function (err, data) {
-                                                    filesUploaded++
-                                                    if (err) {
-                                                        errorHandler(err, 500, "Error occured uploading file to s3")
-                                                    }
-                                                    else {
-                                                        if (filesUploaded === files.length) {
-                                                            files.forEach((fileName) => {
-                                                                fs.unlinkSync(`./${fileName}.csv`)
-                                                            })
-                                                            fs.unlinkSync('./input.csv')
-                                                            resolve(successHandler(200, {
-                                                                message: "Files Uploaded"
-                                                            }))
-                                                        }
-                                                    }
-                                                }
-                                            )
-                                        )
-                                })
-                                .on('error', (err) => reject(errorHandler(err, 404, "File not found")))
-                        })
-                    })
-                    .on("error", (err) => reject(errorHandler(err, 404, "File not found")))
+const promisifyWriteStream = function (csvStream, writeStream) {
+    const pipedStream = csvStream.pipe(writeStream)
+    return new Promise((resolve, reject) => {
+        pipedStream
+            .on('finish', () => {
+                resolve(true)
             })
+            .on('error', reject)
+
     })
 
+}
+
+const uploadFileToS3 = function(files) {
+    return new Promise((resolve, reject) => {
+        let filesUploaded = 0
+        for (const key of files) {
+            const readStream = fs.createReadStream(`./${key}.csv`);
+            readStream.pipe(
+                uploadFromStream
+                (
+                    'ticketlake-dev',
+                    "public-read",
+                    key + '.csv',
+                    function (err, data) {
+                        console.log(data)
+                        filesUploaded++
+                        if (err) {
+                            reject(errorHandler(err, 500, "Error occured uploading file to s3"))
+                        }
+                        else {
+                            if (filesUploaded === files.length) {
+                                files.forEach((fileName) => {
+                                    fs.unlinkSync(`./${fileName}.csv`)
+                                })
+                                fs.unlinkSync('./input.csv')
+                                 resolve(successHandler(200, {
+                                    message: "Files Uploaded"
+                                }))
+                            }
+                        }
+                    }
+                )
+            )
+        }
+    })
+}
+
+const convertAndUploadCsv = async (fileLink) => {
+    try {
+        const result = await promisifyWriteStream(
+            request(fileLink),
+            fs.createWriteStream('input.csv')
+        )
+
+        if (!result) {
+            throw errorHandler("Internal server", 500, "Internal server error")
+        }
+
+        const readStream = fs.createReadStream('./input.csv');
+
+        const fileReadStream = csv.fromStream(readStream)
+
+        const fileMap = await promisifyReadStream(fileReadStream)
+
+        delete fileMap["undefined"]
+
+        const files = Object.keys(fileMap)
+
+        for (const key of files) {
+
+            const newWriteStream = fs.createWriteStream(`${key}.csv`)
+
+            const csvStream = csv.write(fileMap[key], {headers: true})
+
+            await
+                promisifyWriteStream(csvStream, newWriteStream)
+
+        }
+
+        return  await uploadFileToS3(files)
+
+    }
+    catch (err) {
+        return err
+    }
 };
 
 
