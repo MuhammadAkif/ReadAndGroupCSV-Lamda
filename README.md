@@ -64,3 +64,10 @@ It is a post request and below is the body you can send.
     "fileLink": "link-to-your-csv"
 }`
 
+# Note
+Please add a .env file with below three variables for aws-sdk
+
+SECRET_ACCESS_KEY:
+ACCESS_KEY_ID:
+REGION:
+
