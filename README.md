@@ -56,7 +56,7 @@ To run lamda function you need to upload it to aws, but to test it locally and m
 By default it will run on 3000 port to change it use can use
 `serverless offline --port 3000`
 
-You can then hit the server on localhost:<your-port>/csv
+You can then hit the server on localhost:your-port/csv
 
 It is a post request and below is the body you can send.
 
@@ -68,6 +68,8 @@ It is a post request and below is the body you can send.
 Please add a .env file with below three variables for aws-sdk
 
 SECRET_ACCESS_KEY:
+
 ACCESS_KEY_ID:
+
 REGION:
 
